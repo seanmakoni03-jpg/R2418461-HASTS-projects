@@ -1,5 +1,362 @@
+import sqlite3
+import tkinter as tk
+from tkinter import messagebox, ttk
+from datetime import datetime
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-Method 1: Creating Folders on Your Local Computer (Recommended)Since Android Studio or IDE projects generate multiple files, create the folder locally and push it to GitHub:Open your cloned OIBSIP folder on your computer.Create a new folder:Windows/Mac: Right-click inside the OIBSIP directory $\rightarrow$ New Folder $\rightarrow$ Name it (e.g., Android-Task1-UnitConverter).Terminal/Command Prompt:mkdir Android-Task1-UnitConverter
-Save your project files (and your README.md) inside this new subfolder4.Push to GitHub:git add .
-git commit -m "Add Task 1 Unit Converter project"
-git push origin main
+def init_db():
+    """Initializes the SQLite database and creates necessary tables."""
+    conn = sqlite3.connect('bmi_records.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            weight REAL NOT NULL,
+            height REAL NOT NULL,
+            bmi REAL NOT NULL,
+            category TEXT NOT NULL,
+            date TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def get_all_users():
+    """Retrieves all registered user names from the database."""
+    try:
+        conn = sqlite3.connect('bmi_records.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM users ORDER BY name")
+        users = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return users
+    except sqlite3.Error as e:
+        messagebox.showerror("Database Error", f"Failed to retrieve users: {e}")
+        return []
+
+def add_user_to_db(name):
+    """Adds a new user to the database if they don't exist."""
+    name = name.strip()
+    if not name:
+        return False
+    try:
+        conn = sqlite3.connect('bmi_records.db')
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO users (name) VALUES (?)", (name,))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.Error as e:
+        messagebox.showerror("Database Error", f"Failed to add user: {e}")
+        return False
+
+def save_record_to_db(username, weight, height, bmi, category):
+    """Saves a BMI calculation record for a specific user."""
+    try:
+        conn = sqlite3.connect('bmi_records.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE name = ?", (username,))
+        user_row = cursor.fetchone()
+        if not user_row:
+            conn.close()
+            return False
+        user_id = user_row[0]
+        date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        cursor.execute('''
+            INSERT INTO records (user_id, weight, height, bmi, category, date)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user_id, weight, height, bmi, category, date_str))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.Error as e:
+        messagebox.showerror("Database Error", f"Failed to save record: {e}")
+        return False
+
+def fetch_user_history(username):
+    """Fetches all historical BMI records for a given user."""
+    try:
+        conn = sqlite3.connect('bmi_records.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT r.weight, r.height, r.bmi, r.category, r.date
+            FROM records r
+            JOIN users u ON r.user_id = u.id
+            WHERE u.name = ?
+            ORDER BY r.id ASC
+        ''', (username,))
+        records = cursor.fetchall()
+        conn.close()
+        return records
+    except sqlite3.Error as e:
+        messagebox.showerror("Database Error", f"Failed to fetch history: {e}")
+        return []
+
+class BMICalculatorApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Advanced BMI Calculator & Tracker - by Jatoth Adithya Naik")
+        self.root.geometry("850x650")
+        self.root.minsize(800, 600)
+        
+        # Configure style
+        self.style = ttk.Style()
+        self.style.theme_use('clam')
+        
+        init_db()
+        self.create_widgets()
+        self.load_users()
+
+    def create_widgets(self):
+        # Main Container Paned / Notebook
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Tab 1: Calculator & User Dashboard
+        self.calc_frame = ttk.Frame(self.notebook, padding=15)
+        self.notebook.add(self.calc_frame, text=" Calculator & Profiles ")
+
+        # Tab 2: History & Trend Visualization
+        self.trend_frame = ttk.Frame(self.notebook, padding=15)
+        self.notebook.add(self.trend_frame, text=" Trend Analytics ")
+
+        self.setup_calculator_tab()
+        self.setup_trend_tab()
+
+    def setup_calculator_tab(self):
+        # User Selection Section
+        user_frame = ttk.LabelFrame(self.calc_frame, text=" User Management ", padding=15)
+        user_frame.pack(fill='x', pady=5)
+
+        ttk.Label(user_frame, text="Select or Add User:", font=('Arial', 10, 'bold')).pack(side='left', padx=5)
+        
+        self.user_combobox = ttk.Combobox(user_frame, state="readonly", width=20, font=('Arial', 10))
+        self.user_combobox.pack(side='left', padx=5)
+        self.user_combobox.bind("<<ComboboxSelected>>", self.on_user_select)
+
+        self.new_user_entry = ttk.Entry(user_frame, width=15, font=('Arial', 10))
+        self.new_user_entry.pack(side='left', padx=5)
+        self.new_user_entry.insert(0, "New username...")
+        self.new_user_entry.bind("<FocusIn>", lambda e: self.clear_placeholder())
+
+        add_user_btn = ttk.Button(user_frame, text="Add User", command=self.add_new_user)
+        add_user_btn.pack(side='left', padx=5)
+
+        # Input Form Section
+        input_frame = ttk.LabelFrame(self.calc_frame, text=" Body Measurements ", padding=20)
+        input_frame.pack(fill='x', pady=15)
+
+        # Weight Input
+        ttk.Label(input_frame, text="Weight (kg):", font=('Arial', 11)).grid(row=0, column=0, sticky='w', pady=10)
+        self.weight_entry = ttk.Entry(input_frame, font=('Arial', 11), width=15)
+        self.weight_entry.grid(row=0, column=1, sticky='w', padx=15, pady=10)
+
+        # Height Input
+        ttk.Label(input_frame, text="Height (m):", font=('Arial', 11)).grid(row=1, column=0, sticky='w', pady=10)
+        self.height_entry = ttk.Entry(input_frame, font=('Arial', 11), width=15)
+        self.height_entry.grid(row=1, column=1, sticky='w', padx=15, pady=10)
+        ttk.Label(input_frame, text="(e.g., 1.75)", font=('Arial', 9, 'italic'), foreground='gray').grid(row=1, column=2, sticky='w')
+
+        # Calculate Button
+        calc_btn = ttk.Button(input_frame, text="Calculate & Save BMI", command=self.calculate_bmi)
+        calc_btn.grid(row=2, column=0, columnspan=2, pady=15, ipadx=10, ipady=5)
+
+        # Result Display Section
+        self.result_frame = ttk.LabelFrame(self.calc_frame, text=" Results & Feedback ", padding=20)
+        self.result_frame.pack(fill='both', expand=True, pady=5)
+
+        self.bmi_value_label = ttk.Label(self.result_frame, text="BMI: --", font=('Arial', 14, 'bold'))
+        self.bmi_value_label.pack(anchor='w', pady=5)
+
+        self.category_label = ttk.Label(self.result_frame, text="Category: --", font=('Arial', 12, 'bold'))
+        self.category_label.pack(anchor='w', pady=5)
+
+        self.feedback_label = ttk.Label(self.result_frame, text="Provide weight and height to view classification.", font=('Arial', 10))
+        self.feedback_label.pack(anchor='w', pady=5)
+
+    def setup_trend_tab(self):
+        control_frame = ttk.Frame(self.trend_frame)
+        control_frame.pack(fill='x', pady=5)
+
+        ttk.Label(control_frame, text="Select User for History & Chart:", font=('Arial', 10, 'bold')).pack(side='left', padx=5)
+        
+        self.trend_user_combobox = ttk.Combobox(control_frame, state="readonly", width=20, font=('Arial', 10))
+        self.trend_user_combobox.pack(side='left', padx=5)
+        self.trend_user_combobox.bind("<<ComboboxSelected>>", self.load_user_analytics)
+
+        refresh_btn = ttk.Button(control_frame, text="Refresh Data", command=self.refresh_analytics)
+        refresh_btn.pack(side='left', padx=10)
+
+        # Split frame for Table and Matplotlib Chart
+        split_container = ttk.PanedWindow(self.trend_frame, orient='horizontal')
+        split_container.pack(fill='both', expand=True, pady=10)
+
+        # Left side: Records Treeview Table
+        table_frame = ttk.LabelFrame(split_container, text=" Historical Logs ", padding=10)
+        split_container.add(table_frame, weight=1)
+
+        columns = ("Date", "Weight", "Height", "BMI", "Category")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=15)
+        for col in columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=80, anchor='center')
+        self.tree.column("Date", width=120)
+        
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        # Right side: Matplotlib Chart Frame
+        self.chart_frame = ttk.LabelFrame(split_container, text=" BMI Trend Visualization ", padding=10)
+        split_container.add(self.chart_frame, weight=2)
+
+    def clear_placeholder(self):
+        if self.new_user_entry.get() == "New username...":
+            self.new_user_entry.delete(0, tk.END)
+
+    def load_users(self):
+        users = get_all_users()
+        self.user_combobox['values'] = users
+        self.trend_user_combobox['values'] = users
+        if users:
+            self.user_combobox.set(users[0])
+            self.trend_user_combobox.set(users[0])
+            self.load_user_analytics()
+
+    def add_new_user(self):
+        name = self.new_user_entry.get().strip()
+        if not name or name == "New username...":
+            messagebox.showwarning("Input Error", "Please enter a valid username.")
+            return
+        if add_user_to_db(name):
+            messagebox.showinfo("Success", f"User '{name}' added successfully!")
+            self.new_user_entry.delete(0, tk.END)
+            self.new_user_entry.insert(0, "New username...")
+            self.load_users()
+            self.user_combobox.set(name)
+            self.trend_user_combobox.set(name)
+            self.load_user_analytics()
+
+    def on_user_select(self, event):
+        pass
+
+    def calculate_bmi(self):
+        current_user = self.user_combobox.get()
+        if not current_user:
+            messagebox.showerror("Selection Error", "Please select or create a user first.")
+            return
+
+        try:
+            weight_str = self.weight_entry.get().strip()
+            height_str = self.height_entry.get().strip()
+
+            if not weight_str or not height_str:
+                raise ValueError("Fields cannot be empty.")
+
+            weight = float(weight_str)
+            height = float(height_str)
+
+            if weight <= 0 or height <= 0:
+                raise ValueError("Weight and height must be positive values.")
+
+            # Calculate BMI
+            bmi = weight / (height ** 2)
+            bmi_rounded = round(bmi, 2)
+
+            # Classify category and determine colour feedback
+            if bmi < 18.5:
+                category = "Underweight"
+                color = "#3498db" # Blue
+                advice = "You are in the underweight range. Consider consulting a nutritionist."
+            elif 18.5 <= bmi <= 24.9:
+                category = "Normal Weight"
+                color = "#2ecc71" # Green
+                advice = "Fantastic! You are maintaining a healthy weight range."
+            elif 25.0 <= bmi <= 29.9:
+                category = "Overweight"
+                color = "#f39c12" # Orange
+                advice = "You are slightly above the normal range. Regular physical activity can help."
+            else:
+                category = "Obese"
+                color = "#e74c3c" # Red
+                advice = "High BMI range. It is recommended to consult a healthcare professional."
+
+            # Update GUI feedback
+            self.bmi_value_label.config(text=f"BMI: {bmi_rounded} kg/m²", foreground=color)
+            self.category_label.config(text=f"Category: {category}", foreground=color)
+            self.feedback_label.config(text=advice)
+
+            # Save to Database
+            if save_record_to_db(current_user, weight, height, bmi_rounded, category):
+                self.refresh_analytics()
+
+        except ValueError as e:
+            messagebox.showerror("Invalid Input", f"Please check your input values:\n{e}")
+
+    def refresh_analytics(self):
+        self.load_users()
+        self.load_user_analytics()
+
+    def load_user_analytics(self, event=None):
+        selected_user = self.trend_user_combobox.get()
+        if not selected_user:
+            return
+
+        # Clear existing tree data
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        # Fetch records
+        records = fetch_user_history(selected_user)
+        
+        dates = []
+        bmis = []
+
+        for row in records:
+            # row format: (weight, height, bmi, category, date)
+            w, h, b, cat, d = row
+            self.tree.insert("", "end", values=(d, w, h, b, cat))
+            dates.append(d.split()[0]) # Extract date part only for clean plotting
+            bmis.append(b)
+
+        # Render Matplotlib Chart
+        for widget in self.chart_frame.winfo_children():
+            widget.destroy()
+
+        fig, ax = plt.subplots(figsize=(5, 4), dpi=100)
+        if records:
+            ax.plot(dates, bmis, marker='o', color='#2980b9', linewidth=2, markersize=6)
+            ax.axhline(y=18.5, color='#3498db', linestyle='--', alpha=0.7, label='Underweight limit')
+            ax.axhline(y=24.9, color='#2ecc71', linestyle='--', alpha=0.7, label='Normal upper limit')
+            ax.axhline(y=29.9, color='#f39c12', linestyle='--', alpha=0.7, label='Overweight limit')
+            ax.set_title(f"BMI History: {selected_user}", fontsize=11, fontweight='bold')
+            ax.set_xlabel("Date", fontsize=9)
+            ax.set_ylabel("BMI Value", fontsize=9)
+            ax.tick_params(axis='x', rotation=30)
+            ax.grid(True, linestyle=':', alpha=0.6)
+            ax.legend(fontsize=8, loc='upper left')
+            fig.tight_layout()
+        else:
+            ax.text(0.5, 0.5, "No records found for this user.\nCalculate your BMI to view trend charts.", 
+                    horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, fontsize=10, color='gray')
+            ax.set_axis_off()
+
+        canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill='both', expand=True)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = BMICalculatorApp(root)
+    root.mainloop()
