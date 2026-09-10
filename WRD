@@ -1,1 +1,5 @@
 
+Method 1: Creating Folders on Your Local Computer (Recommended)Since Android Studio or IDE projects generate multiple files, create the folder locally and push it to GitHub:Open your cloned OIBSIP folder on your computer.Create a new folder:Windows/Mac: Right-click inside the OIBSIP directory $\rightarrow$ New Folder $\rightarrow$ Name it (e.g., Android-Task1-UnitConverter).Terminal/Command Prompt:mkdir Android-Task1-UnitConverter
+Save your project files (and your README.md) inside this new subfolder4.Push to GitHub:git add .
+git commit -m "Add Task 1 Unit Converter project"
+git push origin main
